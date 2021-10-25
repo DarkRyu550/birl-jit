@@ -132,10 +132,79 @@ impl<'a> Iterator for TokenStream<'a> {
 	}
 }
 
-fn scan_last_
+/// Accepts a decimal integer literal at the start of the given slice.
+fn accept_integer_dec(string: &str, candidate: char) -> ScanOp<i64, LexError> {
+	if candidate.is_ascii_digit() {
+		ScanOp::Continue
+	} else {
+		match string.parse() {
+			Ok(integer) => ScanOp::Accept(integer),
+			Err(what) => ScanOp::Reject(LexError::ExpectedInteger(what))
+		}
+	}
+}
+
+/// Accepts an escaped string literal at the start of the given slice.
+fn accept_string(string: &str, candidate: char) -> ScanOp<&str, LexError> {
+	let l = string.starts_with('"') || (string.is_empty() && candidate == '"');
+	let r = string.ends_with('"') && !string.ends_with("\\\"");
+
+	if l && r {
+		ScanOp::Accept(&string[1..string.len() - 1])
+	} else if l {
+		ScanOp::Continue
+	} else {
+		ScanOp::Reject(LexError::ExpectedString)
+	}
+}
+
+/// Accepts an instance of punctuation at the start of the given slice.
+fn accept_punctuation(string: &str, candidate: char) -> ScanOp<Punctuation, LexError> {
+	match string {
+		"&" | "|" | ":" | "," | "(" | ")" | ";" | "+" | "-" | "*" | "/" =>
+			ScanOp::Accept(Punctuation {
+				internal: InternalToken::Source(string)
+			}),
+		_ => match candidate {
+			'&' | '|' | ':' | ',' | '(' | ')' | ';' | '+' | '-' | '*' | '/' =>
+				ScanOp::Continue,
+			_ => ScanOp::Reject(LexError::ExpectedPunctuation)
+		}
+	}
+}
+
+/// Accepts an instance of an identifier at the start of the given slice.
+fn accept_identifier(string: &str, candidate: char) -> ScanOp<Identifier, LexError> {
+	if string.is_empty() && candidate.is_ascii_digit() {
+		ScanOp::Reject(LexError::IdentifierStartingAtDigit)
+	} else {
+		let ident_valid = |c: char|
+			   c.is_ascii_alphanumeric()
+			|| c == '_';
+
+		if ident_valid(candidate) {
+			ScanOp::Continue
+		} else if !string.is_empty() {
+			ScanOp::Accept(Identifier {
+				internal: InternalToken::Source(string)
+			})
+		} else {
+			ScanOp::Reject(LexError::EmptyIdentifier)
+		}
+	}
+}
 
 /// The type for errors that may happen during tokenization.
 pub enum LexError {
-
+	/// Expected an integer value that could not be parsed.
+	ExpectedInteger(std::num::ParseIntError),
+	/// Expected a string literal that could not be parsed.
+	ExpectedString,
+	/// Expected a piece of punctuation that could not be parsed.
+	ExpectedPunctuation,
+	/// An identifier would start with a decimal digit.
+	IdentifierStartingAtDigit,
+	/// An identifier would be empty.
+	EmptyIdentifier,
 }
 

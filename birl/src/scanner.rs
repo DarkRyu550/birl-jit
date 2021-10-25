@@ -18,11 +18,7 @@ pub struct Scanner<D>(D);
 impl<'a> Scanner<StringDriver<'a>> {
 	/// Creates a new scanner over the given source string slice.
 	pub fn from_str(source: &'a str) -> Self {
-		Self(StringDriver {
-			source,
-			token: 0,
-			len: 0
-		})
+		Self(StringDriver::new(source))
 	}
 }
 impl<D> Scanner<D>
@@ -38,20 +34,20 @@ impl<D> Scanner<D>
 	/// steep to whether the input is complete.
 	pub(crate) fn scan<T, E>(
 		&mut self,
-		mut functor: impl FnMut(&D::Accumulator) -> ScanOp<T, E>)
+		mut functor: impl FnMut(&D::Accumulator, Option<&D::Candidate>) -> ScanOp<T, E>)
 		-> Option<Result<Scan<D, T>, E>> {
 
 		loop {
-			if !self.0.pull() {
-				/* We can't grow our token further, seeing as we're past the end
-				 * of the input string. We should bail out right away. */
-				return None
-			}
-
-			match (functor)(self.0.accumulated()) {
-				ScanOp::Continue =>
+			match (functor)(self.0.accumulated(), self.0.candidate()) {
+				ScanOp::Continue => {
 					/* The function has not made a decision yet, try again. */
-					{},
+					if !self.0.pull() {
+						/* We can't grow our token further, seeing as we're past
+						 * the end of the input string. We should bail out right
+						 * away. */
+						return None
+					}
+				},
 				ScanOp::Accept(value) =>
 					/* The current accumulated string has been accepted. */
 					return Some(Ok(Scan {
@@ -78,7 +74,7 @@ pub enum ScanOp<T, E> {
 	Accept(T),
 	/// Reject the input as a while with the given error.
 	Reject(E),
-	/// Append this item to the accumulated value and try again.
+	/// Append the candidate item to the accumulated value and try again.
 	Continue,
 }
 
@@ -132,10 +128,14 @@ impl<'a, D, T> Scan<'a, D, T>
 pub trait Driver {
 	/// The type that accumulates candidates until a parse decision is made.
 	type Accumulator: ?Sized;
+	/// The type that is a candidate for accumulation.
+	type Candidate: ?Sized;
 
 	/// The string of items currently in the accumulator.
 	fn accumulated(&self) -> &Self::Accumulator;
-	/// Pull the next character in the stream into the accumulator. Returns true
+	/// A reference to the next candidate.
+	fn candidate(&self) -> Option<&Self::Candidate>;
+	/// Pull the next candidate in the stream into the accumulator. Returns true
 	/// if there is another item in the data source, false otherwise.
 	fn pull(&mut self) -> bool;
 	/// Consume everything in the accumulator.
@@ -148,35 +148,69 @@ pub trait Driver {
 pub struct StringDriver<'a> {
 	/// The source string we pull tokens off of.
 	source: &'a str,
+	/// An iterator over its characters.
+	chars: std::iter::Peekable<std::str::Chars<'a>>,
+	/// The candidate character.
+	candidate: Option<char>,
 	/// The offset to the start of the current token.
 	token: usize,
-	/// The current length of the token.
+	/// The current length of the token plus lookahead.
 	len: usize,
+	/// The current length of the token.
+	acc: usize,
+}
+impl<'a> StringDriver<'a> {
+	fn new(source: &'a str) -> Self {
+		let mut chars = source.chars().peekable();
+		let mut candidate = chars.peek().cloned();
+
+		Self {
+			source,
+			chars,
+			candidate,
+			token: 0,
+			len: candidate.map(|char| {
+				let mut buffer = [0; 6];
+				char.encode_utf8(&buffer).len()
+			}).unwrap_or(0),
+			acc: 0
+		}
+	}
+
+	fn to_next(&self, len: usize) -> usize {
+		let mut offset = 1usize;
+
+		let check = self.token + len;
+		let check = check.checked_add(offset).unwrap();
+		while !self.source.is_char_boundary(check) {
+			offset += 1;
+		}
+
+		offset
+	}
 }
 impl<'a> Driver for StringDriver<'a> {
 	type Accumulator = str;
+	type Candidate = char;
+
 	fn accumulated(&self) -> &Self::Accumulator {
-		&self.source[self.token..self.token + self.len]
+		&self.source[self.token..self.token + self.acc]
+	}
+	fn candidate(&self) -> Option<&Self::Candidate> {
+		self.candidate.as_ref()
 	}
 	fn pull(&mut self) -> bool {
-		if self.token >= self.source.len() {
+		if self.acc >= self.source.len() {
 			/* We can't produce any more data. */
 			return false
 		}
 
-		/* Move to the next character. */
-		let next_char_len = || {
-			let mut offset = 1usize;
+		self.len += self.to_next(self.len);
+		self.acc += self.to_next(self.acc);
 
-			let check = self.token + self.len;
-			let check = check.checked_add(offset).unwrap();
-			while !self.source.is_char_boundary(check) {
-				offset += 1;
-			}
+		let _ = self.chars.next();
+		self.candidate = *self.chars.peek();
 
-			offset
-		};
-		self.len += next_char_len();
 		true
 	}
 	fn consume(&mut self) {
