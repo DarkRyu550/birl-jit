@@ -5,7 +5,14 @@ version = 3
 [[package]]
 name = "birl"
 version = "0.1.0"
+dependencies = [
+ "scanner",
+]
 
 [[package]]
 name = "jit"
+version = "0.1.0"
+
+[[package]]
+name = "scanner"
 version = "0.1.0"
