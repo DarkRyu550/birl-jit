@@ -187,20 +187,6 @@ fn accept_whitespace(string: &str, candidate: Option<&char>) -> ScanOp<Whitespac
 
 	eprintln!("accept_whitespace: {}, {:?}", string, candidate);
 
-	match candidate {
-		Some(&'\n') => {
-			whitespace.breaking = true;
-			ScanOp::Continue
-		},
-		Some(char) if char.is_ascii_whitespace() =>
-			ScanOp::Continue,
-		Some(_) | None =>
-			if string.is_empty() {
-				ScanOp::Drop(())
-			} else {
-				ScanOp::Accept(whitespace)
-			}
-	}
 }
 
 /// Accepts any token at the start of the given slice.
